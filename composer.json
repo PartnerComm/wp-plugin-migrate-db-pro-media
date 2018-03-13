@@ -3,10 +3,6 @@
   "version": "1.4.9",
   "description": "WP Migrate DB Pro Media",
   "type": "wordpress-plugin",
-  "dist": {
-    "type": "git",
-    "url": "https://github.com/PartnerComm/wp-plugin-migrate-db-pro-media"
-  },
   "authors": [
     {
       "name": "Partnercomm.net",
