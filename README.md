@@ -7,7 +7,7 @@
 ```
     {
       "type": "vcs",
-      "url": "git@github.com:PartnerComm/wp-plugin-migrate-db-pro-media.git"
+      "url": "https://github.com/PartnerComm/wp-plugin-migrate-db-pro-media.git"
     }
 ```
 
