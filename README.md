@@ -1,5 +1,9 @@
 # wp-plugin-migrate-db-pro-media
 
+## Important note
+
+This plugin is unnecessary if the site is using S3 for uploads, because no images need to be migrated when migrating the database (dev, staging and production all access the same S3 bucket for a site).
+
 ## Using this plugin in a composer project
 
 **For your project's composer.json file**
