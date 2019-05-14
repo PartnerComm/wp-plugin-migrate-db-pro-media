@@ -1,11 +1,21 @@
 <?php
 
+namespace DeliciousBrains\WPMDBMF;
+
+use DeliciousBrains\WPMDB\Common\Properties\DynamicProperties;
+use DeliciousBrains\WPMDB\Common\Properties\Properties;
+use DeliciousBrains\WPMDB\Common\Util\Util;
+use DeliciousBrains\WPMDB\Container;
+use DeliciousBrains\WPMDB\Pro\Addon\Addon;
+use DeliciousBrains\WPMDB\Pro\Addon\AddonAbstract;
+use DeliciousBrains\WPMDB\Pro\UI\Template;
+
 /**
- * Class WPMDBPro_Media_Files
+ * Class MediaFilesAddon
  *
- * Handles the addon setup and settings
+ * @package DeliciousBrains\WPMDBMF
  */
-class WPMDBPro_Media_Files extends WPMDBPro_Addon {
+class MediaFilesAddon extends AddonAbstract {
 
 	/**
 	 * An array strings used for translations
@@ -15,46 +25,67 @@ class WPMDBPro_Media_Files extends WPMDBPro_Addon {
 	protected $media_strings;
 
 	/**
-	 * An instance of WPMDBPro_Media_Files_Local
+	 * An instance of MediaFilesLocal
 	 *
-	 * @var object $media_files_local
+	 * @var MediaFilesLocal
 	 */
 	public $media_files_local;
 
 	/**
-	 * An instance of WPMDBPro_Media_Files_Remote
-	 *
-	 * @var object $media_files_remote
+	 * @var Template
 	 */
-	public $media_files_remote;
+	private $template;
+	private $plugin_dir_path;
+	private $plugin_folder_name;
+	private $plugins_url;
 
-	function __construct( $plugin_file_path ) {
-		parent::__construct( $plugin_file_path );
+	const MDB_VERSION_REQUIRED = '1.9.6';
+
+	public function __construct(
+		Addon $addon,
+		Properties $properties,
+		Template $template
+	) {
+		parent::__construct( $addon, $properties );
 
 		$this->plugin_slug    = 'wp-migrate-db-pro-media-files';
 		$this->plugin_version = $GLOBALS['wpmdb_meta']['wp-migrate-db-pro-media-files']['version'];
 
-		if ( ! $this->meets_version_requirements( '1.8.1' ) ) {
+		$this->template           = $template;
+		$plugin_file_path         = dirname( __DIR__ ) . '/wp-migrate-db-pro-media-files.php';
+		$this->plugin_dir_path    = plugin_dir_path( $plugin_file_path );
+		$this->plugin_folder_name = basename( $this->plugin_dir_path );
+
+		// @TODO see if this works
+		$this->plugins_url   = trailingslashit( plugins_url( $this->plugin_folder_name ) );
+		$this->template_path = $this->plugin_dir_path . 'template/';
+	}
+
+	public function register() {
+		if ( ! $this->meets_version_requirements( self::MDB_VERSION_REQUIRED ) ) {
 			return;
 		}
 
+		add_action( 'admin_init', [ $this, 'plugin_name' ] );
 		add_action( 'wpmdb_after_advanced_options', array( $this, 'migration_form_controls' ) );
 		add_action( 'wpmdb_load_assets', array( $this, 'load_assets' ) );
-		add_action( 'wpmdb_diagnostic_info', array( $this, 'diagnostic_info' ) );
 		add_action( 'wpmdbmf_after_migration_options', array( $this, 'after_migration_options_template' ) );
+		add_filter( 'wpmdb_diagnostic_info', array( $this, 'diagnostic_info' ) );
 		add_filter( 'wpmdb_establish_remote_connection_data', array( $this, 'establish_remote_connection_data' ) );
 		add_filter( 'wpmdb_nonces', array( $this, 'add_nonces' ) );
 		add_filter( 'wpmdb_data', array( $this, 'js_variables' ) );
+	}
 
-		$this->media_files_local  = new WPMDBPro_Media_Files_Local( $plugin_file_path );
-		$this->media_files_remote = new WPMDBPro_Media_Files_Remote( $plugin_file_path );
+	public function plugin_name() {
+		$this->addon_name = $this->addon->get_plugin_name( 'wp-migrate-db-pro-media-files/wp-migrate-db-pro-media-files.php' );
 	}
 
 	/**
 	 * Adds the media settings to the migration setting page in core
 	 */
 	function migration_form_controls() {
-		$this->template( 'migrate' );
+
+		$this->template->template( 'migrate', '', [], $this->template_path );
 	}
 
 	/**
@@ -109,15 +140,14 @@ class WPMDBPro_Media_Files extends WPMDBPro_Addon {
 	 * Load media related assets in core plugin
 	 */
 	function load_assets() {
-		$plugins_url = trailingslashit( plugins_url( $this->plugin_folder_name ) );
-		$version     = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? time() : $this->plugin_version;
-		$ver_string  = '-' . str_replace( '.', '', $this->plugin_version );
-		$min         = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
 
-		$src = $plugins_url . 'asset/dist/css/styles.css';
+		$version    = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? time() : $this->plugin_version;
+		$ver_string = '-' . str_replace( '.', '', $this->plugin_version );
+
+		$src = $this->plugins_url . 'asset/build/css/styles.css';
 		wp_enqueue_style( 'wp-migrate-db-pro-media-files-styles', $src, array( 'wp-migrate-db-pro-styles' ), $version );
 
-		$src = $plugins_url . "asset/dist/js/script{$ver_string}{$min}.js";
+		$src = $this->plugins_url . "asset/build/js/bundle{$ver_string}.js";
 		wp_enqueue_script( 'wp-migrate-db-pro-media-files-script', $src, array(
 			'jquery',
 			'wp-migrate-db-pro-script',
@@ -161,23 +191,20 @@ class WPMDBPro_Media_Files extends WPMDBPro_Addon {
 	/**
 	 * Adds extra information to the core plugin's diagnostic info
 	 */
-	function diagnostic_info() {
+	function diagnostic_info( $diagnostic_info ) {
 		// store the count of local attachments in a transient
 		// so not to impact performance with sites with large media libraries
 		if ( false === ( $attachment_count = get_transient( 'wpmdb_local_attachment_count' ) ) ) {
-			$attachment_count = $this->media_files_local->get_local_attachments_count();
+			$media_files_local = Container::getInstance()->get( 'media_files_addon_base' );
+			$attachment_count  = $media_files_local->get_local_attachments_count();
 			set_transient( 'wpmdb_local_attachment_count', $attachment_count, 2 * HOUR_IN_SECONDS );
 		}
+		$diagnostic_info['media-files'] = array(
+			'Media Files'           => number_format( $attachment_count ),
+			'Number of Image Sizes' => number_format( count( get_intermediate_image_sizes() ) ),
+		);
 
-		echo 'Media Files: ';
-		echo number_format( $attachment_count );
-		echo "\r\n";
-
-		echo 'Number of Image Sizes: ';
-		$sizes = count( get_intermediate_image_sizes() );
-		echo number_format( $sizes );
-		echo "\r\n";
-		echo "\r\n";
+		return $diagnostic_info;
 	}
 
 	/**
@@ -188,10 +215,10 @@ class WPMDBPro_Media_Files extends WPMDBPro_Addon {
 	 * @return array Updated array of nonces
 	 */
 	function add_nonces( $nonces ) {
-		$nonces['migrate_media']                        = WPMDB_Utils::create_nonce( 'migrate-media' );
-		$nonces['remove_files_recursive']               = WPMDB_Utils::create_nonce( 'remove-files-recursive' );
-		$nonces['prepare_determine_media']              = WPMDB_Utils::create_nonce( 'prepare-determine-media' );
-		$nonces['determine_media_to_migrate_recursive'] = WPMDB_Utils::create_nonce( 'determine-media-to-migrate-recursive' );
+		$nonces['migrate_media']                        = Util::create_nonce( 'migrate-media' );
+		$nonces['remove_files_recursive']               = Util::create_nonce( 'remove-files-recursive' );
+		$nonces['prepare_determine_media']              = Util::create_nonce( 'prepare-determine-media' );
+		$nonces['determine_media_to_migrate_recursive'] = Util::create_nonce( 'determine-media-to-migrate-recursive' );
 
 		return $nonces;
 	}
@@ -201,7 +228,7 @@ class WPMDBPro_Media_Files extends WPMDBPro_Addon {
 	 */
 	public function after_migration_options_template() {
 		if ( is_multisite() ) {
-			$this->template( 'select-subsites' );
+			$this->template->template( 'select-subsites', '', [], $this->template_path );
 		}
 	}
 }

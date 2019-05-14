@@ -1,13 +1,12 @@
 <?php
 
-/**
- * Class WPMDBPro_Media_Files_Base
- *
- * Base class that holds common functionality required by both WPMDBPro_Media_Files_Local and
- * WPMDBPro_Media_Files_Remote. Extends WPMDBPro_Addon as we require functionality included in the WPMDB base classes.
- * Never instantiated on its own.
- */
-class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
+namespace DeliciousBrains\WPMDBMF;
+
+use DeliciousBrains\WPMDB\Common\Filesystem\Filesystem;
+use DeliciousBrains\WPMDB\Common\FormData\FormData;
+use DeliciousBrains\WPMDB\Common\MigrationState\MigrationStateManager;
+
+class MediaFilesBase {
 
 	/**
 	 * The number of seconds a batch should run for when queueing or comparing attachments
@@ -31,9 +30,24 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 	protected $media_files_batch_time_limit;
 
 	protected $accepted_fields;
+	/**
+	 * @var Filesystem
+	 */
+	protected $filesystem;
+	/**
+	 * @var MigrationStateManager
+	 */
+	protected $migration_state_manager;
+	/**
+	 * @var FormData
+	 */
+	protected $form_data;
 
-	public function __construct( $plugin_file_path ) {
-		parent::__construct( $plugin_file_path );
+	public function __construct(
+		Filesystem $filesystem,
+		MigrationStateManager $migration_state_manager,
+		FormData $form_data
+	) {
 
 		$this->media_diff_batch_time        = apply_filters( 'wpmdb_media_diff_batch_time', 10 );
 		$this->media_diff_batch_limit       = apply_filters( 'wpmdb_media_diff_batch_limit', 300 );
@@ -47,6 +61,12 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 			'mf_selected_subsites',
 		);
 
+		$this->filesystem              = $filesystem;
+		$this->migration_state_manager = $migration_state_manager;
+		$this->form_data               = $form_data;
+	}
+
+	public function register() {
 		add_filter( 'wpmdb_accepted_profile_fields', array( $this, 'accepted_profile_fields' ) );
 		add_filter( 'wpmdbmf_include_subsite', array( $this, 'include_subsite' ), 10, 2 );
 	}
@@ -77,7 +97,7 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 			$blogs = $this->get_blog_ids();
 			foreach ( $blogs as $blog ) {
 				$blog_prefix = $wpdb->get_blog_prefix( $blog );
-				$count += $this->get_attachments_count( $blog_prefix );
+				$count       += $this->get_attachments_count( $blog_prefix );
 			}
 		} else {
 			$count += $this->get_attachments_count( $wpdb->base_prefix );
@@ -91,7 +111,7 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 	 *
 	 * @param string $prefix Blog db prefix
 	 *
-	 * @return int Number of attachments
+	 * @return array
 	 */
 	function get_attachments_count( $prefix ) {
 		return $this->get_attachment_results( $prefix, 'count' );
@@ -142,12 +162,12 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 
 		if ( 'rows' == $result_type ) {
 			$action = 'get_results';
-			$sql .= "AND `{$prefix}posts`.`ID` > %d
+			$sql    .= "AND `{$prefix}posts`.`ID` > %d
 				ORDER BY `{$prefix}posts`.`ID`
 				LIMIT %d";
 		} else {
 			$action = 'get_row';
-			$sql .= 'AND pm1.`meta_value` = %s';
+			$sql    .= 'AND pm1.`meta_value` = %s';
 		}
 
 		$sql = $wpdb->prepare( $sql, $args );
@@ -326,7 +346,7 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 		$sub_paths = glob( $dir_path . '*', GLOB_MARK );
 
 		// Get all the files except the one we use to store backups.
-		$wpmdb_upload_folder = $this->get_upload_info();
+		$wpmdb_upload_folder = $this->filesystem->get_upload_info();
 		$pattern             = '/' . preg_quote( $wpmdb_upload_folder, '/' ) . '/';
 		$files               = preg_grep( $pattern, $sub_paths ? $sub_paths : array(), PREG_GREP_INVERT );
 
@@ -351,7 +371,7 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 			$short_file_path = str_replace( array( $upload_dir, '\\' ), array( '', '/' ), $file_path );
 
 			// Is directory? We use this instead of is_dir() to save us an I/O call
-			if ( substr( $file_path, -1 ) == DIRECTORY_SEPARATOR ) {
+			if ( substr( $file_path, - 1 ) == DIRECTORY_SEPARATOR ) {
 				$this->get_local_media_files_batch_recursive( $short_file_path, '', $local_media_files );
 				continue;
 			}
@@ -409,11 +429,16 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 	 *
 	 * @return array Data to return to AJAX response
 	 */
-	function compare_remote_attachments( $blogs, $all_attachments, $progress ) {
+	function compare_remote_attachments( $blogs, $all_attachments, $progress, $intent ) {
 		if ( ! is_array( $blogs ) ) {
 			$blogs = unserialize( stripslashes( $blogs ) );
 		}
+
 		if ( ! is_array( $all_attachments ) ) {
+			if ( 'push' === $intent ) {
+				$all_attachments = gzdecode( base64_decode( $all_attachments ) );
+			}
+
 			$all_attachments = unserialize( stripslashes( $all_attachments ) );
 		}
 
@@ -448,7 +473,7 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 				}
 
 				$blogs[ $blog_id ]['last_post'] = $remote_attachment['ID'];
-				$progress++;
+				$progress ++;
 			}
 		}
 
@@ -761,11 +786,11 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 			return $blog_ids;
 		}
 
-		$args  = array(
+		$args = array(
 			'spam'     => 0,
 			'deleted'  => 0,
 			'archived' => 0,
-			'number' => false
+			'number'   => false,
 		);
 
 		if ( version_compare( $GLOBALS['wp_version'], '4.6', '>=' ) ) {
@@ -810,17 +835,17 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 	 * @return bool
 	 */
 	public function include_subsite( $value, $blog_id ) {
-		$this->set_post_data();
-
-		if ( is_null( $this->form_data ) && ! empty( $this->state_data['form_data'] ) ) {
-			$this->form_data = $this->parse_migration_form_data( $this->state_data['form_data'] );
+		$state_data = $this->migration_state_manager->set_post_data();
+		$form_data  = $this->form_data->getFormData();
+		if ( empty( $form_data ) && ! empty( $state_data['form_data'] ) ) {
+			$form_data = $this->parse_migration_form_data( $state_data['form_data'] );
 		}
 
-		if ( false === $value || empty( $this->form_data['mf_select_subsites'] ) || empty( $this->form_data['mf_selected_subsites'] ) ) {
+		if ( false === $value || empty( $form_data['mf_select_subsites'] ) || empty( $form_data['mf_selected_subsites'] ) ) {
 			return $value;
 		}
 
-		if ( ! in_array( $blog_id, $this->form_data['mf_selected_subsites'] ) ) {
+		if ( ! in_array( $blog_id, $form_data['mf_selected_subsites'] ) ) {
 			$value = false;
 		}
 
@@ -835,7 +860,7 @@ class WPMDBPro_Media_Files_Base extends WPMDBPro_Addon {
 	 * @return array|string
 	 */
 	function parse_migration_form_data( $data ) {
-		$form_data = parent::parse_migration_form_data( $data );
+		$form_data = $this->form_data->parse_migration_form_data( $data );
 
 		$form_data = array_intersect_key( $form_data, array_flip( $this->accepted_fields ) );
 
