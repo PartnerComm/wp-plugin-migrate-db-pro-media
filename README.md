@@ -17,7 +17,7 @@ This plugin is unnecessary if the site is using S3 for uploads, because no image
 
 * Add this to the require section. Note, update the version to the latest release in the repo
 ```
-    "pcomm/dbmigratepromedia": "1.4.9",
+    "pcomm/dbmigratepromedia": "1.4.14",
 ```
 * Don't forget to separate these with commas
 
